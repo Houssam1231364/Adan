@@ -1,59 +1,86 @@
-import streamlit as st
-from datetime import datetime, date
-from prayer_times import PrayerTimes
-import base64
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+  <meta charset="UTF-8">
+  <title>تطبيق الأذان</title>
+  <style>
+    body {
+      font-family: 'Arial', sans-serif;
+      background: linear-gradient(135deg, #1e293b, #334155);
+      color: #f1f5f9;
+      text-align: center;
+      padding: 20px;
+      direction: rtl;
+    }
+    .container {
+      background: rgba(255, 255, 255, 0.05);
+      padding: 30px;
+      border-radius: 20px;
+      box-shadow: 0 0 20px rgba(0,0,0,0.3);
+      max-width: 400px;
+      margin: auto;
+      backdrop-filter: blur(8px);
+    }
+    h1 {
+      color: #38bdf8;
+      font-size: 24px;
+    }
+    p {
+      font-size: 18px;
+      margin: 10px 0;
+    }
+    button {
+      padding: 12px 24px;
+      font-size: 16px;
+      background-color: #38bdf8;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+    button:hover {
+      background-color: #0ea5e9;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>تطبيق الأذان</h1>
+    <p id="prayer-times">جاري تحديد موقعك وحساب أوقات الصلاة...</p>
+    <button onclick="playAdhan()">🔊 تشغيل الأذان</button>
+  </div>
 
-# إعداد الموقع
-location = {"latitude": 36.75, "longitude": 3.06, "timezone": +1}
-pt = PrayerTimes(location)
-today = date.today()
-prayer_times = pt.get_times(today)
+  <audio id="adhan" src="https://download.quranicaudio.com/quran/mishaari_raashid_al_3afaasee/001.mp3"></audio>
 
-# إعداد الصفحة
-st.set_page_config(page_title="تطبيق الأذان", layout="centered")
+  <script>
+    function playAdhan() {
+      document.getElementById('adhan').play();
+    }
 
-# خلفية
-def set_bg(image_file):
-    with open(image_file, "rb") as image:
-        encoded = base64.b64encode(image.read()).decode()
-    page_bg = f"""
-    <style>
-    .stApp {{
-        background-image: url("data:image/jpg;base64,{encoded}");
-        background-size: cover;
-        background-repeat: no-repeat;
-        background-attachment: fixed;
-    }}
-    </style>
-    """
-    st.markdown(page_bg, unsafe_allow_html=True)
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(success => {
+        const lat = success.coords.latitude;
+        const lon = success.coords.longitude;
 
-set_bg("background.jpg")
-
-st.markdown("<h1 style='text-align: center; color: white;'>🕌 مواقيت الصلاة - الجزائر</h1>", unsafe_allow_html=True)
-
-# أوقات الصلاة
-for name, t in prayer_times.items():
-    st.markdown(f"<h4 style='color:white;'>{name.capitalize()}: {t.strftime('%H:%M')}</h4>", unsafe_allow_html=True)
-
-# تشغيل صوت الأذان
-st.markdown("---")
-st.markdown("### 🔊 تشغيل الأذان:")
-
-audio_file = open("athan.mp3", "rb")
-audio_bytes = audio_file.read()
-st.audio(audio_bytes, format='audio/mp3')
-
-# الصلاة القادمة
-now = datetime.now().time()
-next_prayer = None
-for name, t in prayer_times.items():
-    if now < t:
-        next_prayer = (name, t)
-        break
-
-if next_prayer:
-    name, t = next_prayer
-    st.markdown(f"<h3 style='color:yellow;'>🕰️ الصلاة القادمة: {name.capitalize()} في {t.strftime('%H:%M')}</h3>", unsafe_allow_html=True)
-else:
-    st.markdown(f"<h3 style='color:yellow;'>🕰️ الصلاة القادمة: Fajr في {prayer_times['Fajr'].strftime('%H:%M')} (غدًا)</h3>", unsafe_allow_html=True)
+        fetch(`https://api.aladhan.com/v1/timings?latitude=${lat}&longitude=${lon}&method=2`)
+          .then(res => res.json())
+          .then(data => {
+            const timings = data.data.timings;
+            const prayerTimes = `
+              🕌 الفجر: ${timings.Fajr}<br>
+              ☀️ الشروق: ${timings.Sunrise}<br>
+              🕛 الظهر: ${timings.Dhuhr}<br>
+              🕒 العصر: ${timings.Asr}<br>
+              🌇 المغرب: ${timings.Maghrib}<br>
+              🌙 العشاء: ${timings.Isha}
+            `;
+            document.getElementById('prayer-times').innerHTML = prayerTimes;
+          });
+      });
+    } else {
+      document.getElementById('prayer-times').textContent = "المتصفح لا يدعم تحديد الموقع.";
+    }
+  </script>
+</body>
+</html>
