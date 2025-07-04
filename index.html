@@ -1,108 +1,221 @@
-"""
-تطبيق الأذان المتكامل مع واجهة حديثة
-الإصدار: 2.0 المميز
-المميزات:
-- حساب أوقات الصلاة بدقة عالية
-- نظام إشعارات ذكي
-- واجهة مستخدم ثلاثية الأبعاد
-- دعم 40 لغة عالمية
-- تكامل مع التقويم الهجري
-- نظام تحديد الموقع الذكي
-- محرك بحث عن المساجد القريبة
-- تخصيص متقدم للإعدادات
-"""
+// main.dart
+import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:flutter_qiblah/flutter_qiblah.dart';
+import 'package:intl/intl.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
-from datetime import datetime
-import tkinter as tk
-from tkinter import ttk, messagebox
-from geopy.geocoders import Nominatim
-import requests
-import threading
-from PIL import Image, ImageTk
-import math
+void main() => runApp(PrayerApp());
 
-class PrayerTimesApp:
-    def __init__(self):
-        self.root = tk.Tk()
-        self.root.title("DeepSeek الأذان الذهبي")
-        self.root.geometry("1280x720")
-        self.root.configure(bg="#1a1a2e")
-        
-        # تحميل الخلفية المميزة
-        self.bg_image = ImageTk.PhotoImage(Image.open("background.jpg").resize((1280,720)))
-        self.bg_label = tk.Label(self.root, image=self.bg_image)
-        self.bg_label.place(x=0, y=0, relwidth=1, relheight=1)
-        
-        self.create_main_interface()
-        self.setup_calculations()
-        self.update_times()
-        
-    def create_main_interface(self):
-        # شريط العنوان المخصص
-        self.title_bar = tk.Frame(self.root, bg="#16213E", height=50)
-        self.title_bar.pack(fill=tk.X)
-        
-        # عناصر الواجهة الرئيسية
-        self.style = ttk.Style()
-        self.style.configure("Golden.TLabel", 
-                           foreground="#e94560", 
-                           font=("Arial", 24, "bold"),
-                           background="#1a1a2e")
-                           
-        self.time_labels = {
-            'Fajr': ttk.Label(self.root, style="Golden.TLabel"),
-            'Dhuhr': ttk.Label(self.root, style="Golden.TLabel"),
-            'Asr': ttk.Label(self.root, style="Golden.TLabel"),
-            'Maghrib': ttk.Label(self.root, style="Golden.TLabel"),
-            'Isha': ttk.Label(self.root, style="Golden.TLabel")
-        }
-        
-        # نظام الإشعارات الذكي
-        self.notification_system = NotificationManager(self.root)
-        
-        # لوحة التحكم المتقدمة
-        self.create_control_panel()
-        
-    def setup_calculations(self):
-        self.location_manager = LocationTracker()
-        self.calculator = PrayerCalculator(
-            method='MWL',
-            asr_juristic='Standard',
-            adjust_angle=3,
-            latitude=24.7136,
-            longitude=46.6753
-        )
-        
-    def update_times(self):
-        # نظام التحديث الذكي
-        pass
-        
-    def create_control_panel(self):
-        # لوحة الإعدادات المتقدمة
-        pass
+class PrayerApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'أذان متطور',
+      theme: ThemeData.light(),
+      darkTheme: ThemeData.dark(),
+      home: HomeScreen(),
+    );
+  }
+}
 
-class NotificationManager:
-    def __init__(self, parent):
-        self.pre_athan_alert = PreAthanAlertSystem()
-        self.voice_announcement = VoiceEngine()
-        
-class LocationTracker:
-    def __init__(self):
-        self.gps_precision = 0.0001
-        self.last_known_location = (24.7136, 46.6753)
-        
-class PrayerCalculator:
-    def __init__(self, method, asr_juristic, adjust_angle, latitude, longitude):
-        self.calculation_methods = {
-            'MWL': {'fajr': 18, 'isha': 17},
-            'ISNA': {'fajr': 15, 'isha': 15},
-            'Egypt': {'fajr': 19.5, 'isha': 17.5}
-        }
-        
-    def calculate_times(self):
-        # خوارزمية حساب متقدمة
-        pass
+class HomeScreen extends StatefulWidget {
+  @override
+  _HomeScreenState createState() => _HomeScreenState();
+}
 
-if __name__ == "__main__":
-    app = PrayerTimesApp()
-    app.root.mainloop()
+class _HomeScreenState extends State<HomeScreen> {
+  Position? _currentPosition;
+  QiblahDirection? _qiblahDirection;
+  Map<String, dynamic>? _prayerTimes;
+
+  // احصل على الموقع
+  Future<void> _getLocation() async {
+    Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high);
+    setState(() {
+      _currentPosition = position;
+    });
+    _getPrayerTimes(position.latitude, position.longitude);
+  }
+
+  // احصل على أوقات الصلاة من API
+  Future<void> _getPrayerTimes(double lat, double lng) async {
+    final response = await http.get(Uri.parse(
+        'http://api.aladhan.com/v1/timings/${DateFormat('dd-MM-yyyy').format(DateTime.now())}?latitude=$lat&longitude=$lng&method=4'));
+    
+    if (response.statusCode == 200) {
+      setState(() {
+        _prayerTimes = json.decode(response.body)['data']['timings'];
+      });
+    }
+  }
+
+  // احسب اتجاه القبلة
+  Future<void> _calculateQibla() async {
+    if (_currentPosition != null) {
+      final qiblah = await Qiblah.qiblah(
+        latitude: _currentPosition!.latitude,
+        longitude: _currentPosition!.longitude,
+      );
+      setState(() {
+        _qiblahDirection = qiblah;
+      });
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _getLocation();
+    _calculateQibla();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('أذان متطور'),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.settings),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => SettingsScreen()),
+            ),
+          ),
+        ],
+      ),
+      body: _buildMainContent(),
+    );
+  }
+
+  Widget _buildMainContent() {
+    if (_currentPosition == null || _prayerTimes == null) {
+      return Center(child: CircularProgressIndicator());
+    }
+    
+    return Column(
+      children: [
+        _PrayerTimesCard(prayerTimes: _prayerTimes!),
+        _QiblaCompass(qiblahDirection: _qiblahDirection),
+        _AdditionalFeatures(),
+      ],
+    );
+  }
+}
+
+// بطاقة أوقات الصلاة
+class _PrayerTimesCard extends StatelessWidget {
+  final Map<String, dynamic> prayerTimes;
+
+  const _PrayerTimesCard({required this.prayerTimes});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Text('أوقات الصلاة', style: TextStyle(fontSize: 20)),
+            SizedBox(height: 10),
+            ..._buildPrayerTimeRows(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildPrayerTimeRows() {
+    return [
+      _PrayerTimeRow('الفجر', prayerTimes['Fajr']),
+      _PrayerTimeRow('الشروق', prayerTimes['Sunrise']),
+      _PrayerTimeRow('الظهر', prayerTimes['Dhuhr']),
+      _PrayerTimeRow('العصر', prayerTimes['Asr']),
+      _PrayerTimeRow('المغرب', prayerTimes['Maghrib']),
+      _PrayerTimeRow('العشاء', prayerTimes['Isha']),
+    ];
+  }
+}
+
+// صف وقت الصلاة
+class _PrayerTimeRow extends StatelessWidget {
+  final String prayerName;
+  final String prayerTime;
+
+  const _PrayerTimeRow(this.prayerName, this.prayerTime);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(prayerName, style: TextStyle(fontWeight: FontWeight.bold)),
+          Text(prayerTime),
+        ],
+      ),
+    );
+  }
+}
+
+// بوصلة القبلة
+class _QiblaCompass extends StatelessWidget {
+  final QiblahDirection? qiblahDirection;
+
+  const _QiblaCompass({this.qiblahDirection});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Text('اتجاه القبلة', style: TextStyle(fontSize: 20)),
+            SizedBox(height: 20),
+            Stack(
+              alignment: Alignment.center,
+              children: [
+                Image.asset('assets/compass.png', width: 200),
+                Transform.rotate(
+                  angle: (qiblahDirection?.direction ?? 0) * (pi / 180),
+                  child: Image.asset('assets/needle.png', width: 100),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// شاشة الإعدادات
+class SettingsScreen extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('الإعدادات')),
+      body: ListView(
+        children: [
+          ListTile(
+            title: Text('طريقة الحساب'),
+            subtitle: Text('رابطة العالم الإسلامي'),
+            trailing: Icon(Icons.arrow_forward_ios),
+          ),
+          SwitchListTile(
+            title: Text('الوضع الليلي'),
+            value: Theme.of(context).brightness == Brightness.dark,
+            onChanged: (value) {},
+          ),
+          // إضافة المزيد من الإعدادات هنا
+        ],
+      ),
+    );
+  }
+}
+      
