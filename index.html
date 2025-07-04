@@ -1,85 +1,130 @@
 <!DOCTYPE html>
-<html lang="ar">
+<html lang="ar" dir="rtl">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>تطبيق الأذان</title>
   <style>
     body {
-      font-family: 'Arial', sans-serif;
-      background: linear-gradient(135deg, #1e293b, #334155);
-      color: #f1f5f9;
-      text-align: center;
+      margin: 0;
+      font-family: 'Cairo', sans-serif;
+      background: linear-gradient(to right, #0f172a, #1e293b);
+      color: #f8fafc;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
       padding: 20px;
-      direction: rtl;
     }
-    .container {
-      background: rgba(255, 255, 255, 0.05);
-      padding: 30px;
+
+    .app {
+      background-color: rgba(255, 255, 255, 0.05);
       border-radius: 20px;
-      box-shadow: 0 0 20px rgba(0,0,0,0.3);
+      padding: 30px;
       max-width: 400px;
-      margin: auto;
-      backdrop-filter: blur(8px);
+      width: 100%;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+      text-align: center;
     }
+
     h1 {
       color: #38bdf8;
-      font-size: 24px;
+      margin-bottom: 20px;
     }
-    p {
+
+    .prayer-times {
+      margin: 15px 0;
       font-size: 18px;
-      margin: 10px 0;
+      line-height: 1.6;
     }
-    button {
-      padding: 12px 24px;
+
+    select, button {
+      margin-top: 15px;
+      padding: 10px;
       font-size: 16px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      width: 100%;
+    }
+
+    select {
+      background-color: #f1f5f9;
+      color: #0f172a;
+    }
+
+    button {
       background-color: #38bdf8;
       color: white;
-      border: none;
-      border-radius: 10px;
-      cursor: pointer;
-      margin-top: 20px;
     }
+
     button:hover {
       background-color: #0ea5e9;
+    }
+
+    .footer {
+      margin-top: 20px;
+      font-size: 14px;
+      color: #94a3b8;
     }
   </style>
 </head>
 <body>
-  <div class="container">
+  <div class="app">
     <h1>تطبيق الأذان</h1>
-    <p id="prayer-times">جاري تحديد موقعك وحساب أوقات الصلاة...</p>
+    <div id="prayer-times" class="prayer-times">جاري تحديد موقعك...</div>
+
+    <select id="moazin-select">
+      <option value="mishary">مشاري العفاسي</option>
+      <option value="harthi">أحمد الحذيفي</option>
+      <option value="jazaa">محمد الجزار</option>
+    </select>
+
     <button onclick="playAdhan()">🔊 تشغيل الأذان</button>
+
+    <audio id="adhan-audio" controls style="display: none;"></audio>
+
+    <div class="footer">🕋 يتم تحديد أوقات الصلاة حسب موقعك الجغرافي</div>
   </div>
 
-  <audio id="adhan" src="https://download.quranicaudio.com/quran/mishaari_raashid_al_3afaasee/001.mp3"></audio>
-
   <script>
+    const adhanAudio = document.getElementById("adhan-audio");
+    const moazinSelect = document.getElementById("moazin-select");
+
+    const adhanSources = {
+      mishary: "https://download.quranicaudio.com/quran/mishaari_raashid_al_3afaasee/001.mp3",
+      harthi: "https://download.quranicaudio.com/quran/ahmad_ibn_ali_al-hudhaifi/001.mp3",
+      jazaa: "https://download.quranicaudio.com/quran/muhammad_jibreel/001.mp3"
+    };
+
     function playAdhan() {
-      document.getElementById('adhan').play();
+      const selected = moazinSelect.value;
+      adhanAudio.src = adhanSources[selected];
+      adhanAudio.play();
     }
 
     if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(success => {
-        const lat = success.coords.latitude;
-        const lon = success.coords.longitude;
+      navigator.geolocation.getCurrentPosition(pos => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
 
         fetch(`https://api.aladhan.com/v1/timings?latitude=${lat}&longitude=${lon}&method=2`)
-          .then(res => res.json())
+          .then(response => response.json())
           .then(data => {
-            const timings = data.data.timings;
-            const prayerTimes = `
-              🕌 الفجر: ${timings.Fajr}<br>
-              ☀️ الشروق: ${timings.Sunrise}<br>
-              🕛 الظهر: ${timings.Dhuhr}<br>
-              🕒 العصر: ${timings.Asr}<br>
-              🌇 المغرب: ${timings.Maghrib}<br>
-              🌙 العشاء: ${timings.Isha}
+            const t = data.data.timings;
+            document.getElementById("prayer-times").innerHTML = `
+              🕓 الفجر: ${t.Fajr}<br>
+              🌄 الشروق: ${t.Sunrise}<br>
+              ☀️ الظهر: ${t.Dhuhr}<br>
+              🕒 العصر: ${t.Asr}<br>
+              🌇 المغرب: ${t.Maghrib}<br>
+              🌙 العشاء: ${t.Isha}
             `;
-            document.getElementById('prayer-times').innerHTML = prayerTimes;
           });
+      }, () => {
+        document.getElementById("prayer-times").innerText = "⚠️ لم نتمكن من تحديد موقعك.";
       });
     } else {
-      document.getElementById('prayer-times').textContent = "المتصفح لا يدعم تحديد الموقع.";
+      document.getElementById("prayer-times").innerText = "⚠️ المتصفح لا يدعم تحديد الموقع.";
     }
   </script>
 </body>
