@@ -1,362 +1,185 @@
-import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:flutter_qiblah/flutter_qiblah.dart';
-import 'package:intl/intl.dart';
-import 'package:http/http.dart' as http;
-import 'dart:math';
-import 'dart:async';
-import 'dart:convert';
+"""
+نظام متكامل لإدارة أوقات الصلاة مع واجهة ويب وAPI وإشعارات
+متطلبات التشغيل: pip install flask numpy astral timezonefinder plyer
+"""
 
-void main() => runApp(const PrayerApp());
+from flask import Flask, jsonify, request
+import datetime
+import math
+import sqlite3
+from astral.sun import sun
+from astral import LocationInfo
+from timezonefinder import TimezoneFinder
+import pytz
+import requests
+from plyer import notification
+import threading
 
-class PrayerApp extends StatelessWidget {
-  const PrayerApp({super.key});
+app = Flask(__name__)
 
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'أذان متطور',
-      theme: ThemeData(
-        fontFamily: 'Amiri',
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blue,
-          brightness: Brightness.light,
-        ),
-        useMaterial3: true,
-      ),
-      darkTheme: ThemeData(
-        fontFamily: 'Amiri',
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blueGrey,
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-      ),
-      home: const HomeScreen(),
-    );
-  }
-}
+# ─── إعدادات القالب HTML ───────────────────────────────────────────
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html dir="rtl">
+<head>
+    <title>مواقيت الصلاة</title>
+    <style>
+        body {{
+            font-family: 'Arial', sans-serif;
+            background: #f0f5f9;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }}
+        .container {{
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }}
+        table {{
+            width: 100%;
+            margin: 20px 0;
+            border-collapse: collapse;
+        }}
+        th, td {{
+            padding: 12px;
+            border-bottom: 1px solid #ddd;
+        }}
+        th {{
+            background-color: #2c3e50;
+            color: white;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>أوقات الصلاة ليوم {date}</h1>
+        <table>
+            <tr><th>الصلاة</th><th>الوقت</th></tr>
+            {rows}
+        </table>
+    </div>
+</body>
+</html>
+"""
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+# ─── إدارة قاعدة البيانات ───────────────────────────────────────────
+def init_db():
+    conn = sqlite3.connect('prayer_times.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS prayer_times
+                (date TEXT PRIMARY KEY, fajr TEXT, sunrise TEXT, 
+                 dhuhr TEXT, asr TEXT, maghrib TEXT, isha TEXT)''')
+    conn.commit()
+    conn.close()
 
-  @override
-  State<HomeScreen> createState() => _HomeScreenState();
-}
+init_db()
 
-class _HomeScreenState extends State<HomeScreen> {
-  Position? _currentPosition;
-  double _qiblahDirection = 0;
-  Map<String, String>? _prayerTimes;
-  String _errorMessage = '';
-  bool _isLoading = true;
-  bool _isDarkMode = false;
-
-  final List<String> _prayerNames = [
-    'الفجر',
-    'الشروق',
-    'الظهر',
-    'العصر',
-    'المغرب',
-    'العشاء'
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    _initializeApp();
-  }
-
-  Future<void> _initializeApp() async {
-    try {
-      await _checkLocationPermissions();
-      await _getLocation();
-      await _calculateQibla();
-      await _getPrayerTimes();
-    } catch (e) {
-      setState(() {
-        _errorMessage = 'حدث خطأ: ${e.toString()}';
-        _isLoading = false;
-      });
-    }
-  }
-
-  Future<void> _checkLocationPermissions() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      throw Exception('الرجاء تفعيل خدمة الموقع');
-    }
-
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission != LocationPermission.whileInUse &&
-          permission != LocationPermission.always) {
-        throw Exception('تم رفض إذن الموقع');
-      }
-    }
-  }
-
-  Future<void> _getLocation() async {
-    try {
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.best,
-      );
-      setState(() => _currentPosition = position);
-    } on Exception catch (e) {
-      throw Exception('فشل في الحصول على الموقع: $e');
-    }
-  }
-
-  Future<void> _getPrayerTimes() async {
-    if (_currentPosition == null) return;
-
-    final url = Uri.https(
-      'api.aladhan.com',
-      '/v1/timings/${DateFormat('dd-MM-yyyy').format(DateTime.now())}',
-      {
-        'latitude': _currentPosition!.latitude.toStringAsFixed(4),
-        'longitude': _currentPosition!.longitude.toStringAsFixed(4),
-        'method': '4',
-      },
-    );
-
-    try {
-      final response = await http.get(url).timeout(const Duration(seconds: 10));
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body)['data']['timings'] as Map<String, dynamic>;
-        setState(() {
-          _prayerTimes = data.map((key, value) => MapEntry(key, value.toString()));
-          _isLoading = false;
-        });
-      } else {
-        throw Exception('فشل في جلب البيانات: ${response.statusCode}');
-      }
-    } on TimeoutException {
-      throw Exception('انتهى وقت الانتظار');
-    }
-  }
-
-  Future<void> _calculateQibla() async {
-    if (_currentPosition == null) return;
+# ─── نواة الحسابات الفلكية ─────────────────────────────────────────
+class PrayerCalculator:
+    def __init__(self, lat=24.7136, lng=46.6753, method='makkah', madhab='shafi'):
+        self.lat = lat
+        self.lng = lng
+        self.method = method
+        self.madhab = madhab
+        self.timezone = self._get_timezone()
+        
+    def _get_timezone(self):
+        tf = TimezoneFinder()
+        return pytz.timezone(tf.timezone_at(lat=self.lat, lng=self.lng))
     
-    try {
-      final qiblah = await FlutterQiblah.qiblah(
-        latitude: _currentPosition!.latitude,
-        longitude: _currentPosition!.longitude,
-      );
-      setState(() => _qiblahDirection = qiblah.direction);
-    } on Exception catch (e) {
-      throw Exception('خطأ في حساب القبلة: $e');
-    }
-  }
+    def calculate_times(self, date=datetime.date.today()):
+        location = LocationInfo("Custom", "Region", self.timezone.zone, self.lat, self.lng)
+        s = sun(location.observer, date=date, tzinfo=self.timezone)
+        
+        times = {
+            'Fajr': s['dawn'],
+            'Sunrise': s['sunrise'],
+            'Dhuhr': s['noon'],
+            'Asr': self._compute_asr(s['noon']),
+            'Maghrib': s['sunset'],
+            'Isha': s['dusk']
+        }
+        
+        if self.method == 'makkah':
+            times['Isha'] = times['Maghrib'] + datetime.timedelta(hours=1.5)
+        elif self.method == 'isna':
+            times['Fajr'] -= datetime.timedelta(hours=0.5)
+            
+        return {k: v.strftime('%H:%M') for k, v in times.items()}
+    
+    def _compute_asr(self, noon_time):
+        shadow = 2 if self.madhab == 'hanafi' else 1
+        declination = math.degrees(math.asin(
+            math.sin(math.radians(23.45)) * 
+            math.sin(math.radians(360/365.25 * (noon_time.timetuple().tm_yday - 81)))
+        ))
+        
+        hour_angle = math.degrees(math.acos(
+            (math.sin(math.radians(declination)) + 
+             math.sin(math.radians(self.lat)) * math.tan(math.radians(shadow))) /
+            (math.cos(math.radians(self.lat)) * math.tan(math.radians(shadow)))
+        ))
+        
+        return noon_time + datetime.timedelta(hours=hour_angle/15)
 
-  void _toggleDarkMode(bool value) {
-    setState(() {
-      _isDarkMode = value;
-    });
-  }
+# ─── خدمات المساعدة ────────────────────────────────────────────────
+def get_current_location():
+    try:
+        response = requests.get('https://ipapi.co/json/', timeout=3)
+        data = response.json()
+        return (data['latitude'], data['longitude'])
+    except:
+        return (24.7136, 46.6753)
 
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      theme: _isDarkMode ? ThemeData.dark() : ThemeData.light(),
-      home: Scaffold(
-        appBar: AppBar(
-          title: const Text('أذان متطور'),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: _initializeApp,
-            ),
-            IconButton(
-              icon: const Icon(Icons.settings),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => SettingsScreen(
-                    isDarkMode: _isDarkMode,
-                    onDarkModeChanged: _toggleDarkMode,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-        body: _buildContent(),
-      ),
-    );
-  }
+def send_notification(prayer, time):
+    notification.notify(
+        title=f"حان وقت {prayer}",
+        message=f"الوقت المتبقي: {time}",
+        timeout=30
+    )
 
-  Widget _buildContent() {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
+# ─── نقاط نهاية API ────────────────────────────────────────────────
+@app.route('/')
+def home():
+    lat, lng = get_current_location()
+    calculator = PrayerCalculator(lat, lng)
+    times = calculator.calculate_times()
+    date = datetime.date.today().strftime("%Y-%m-%d")
+    
+    # حفظ في قاعدة البيانات
+    conn = sqlite3.connect('prayer_times.db')
+    c = conn.cursor()
+    c.execute('INSERT OR REPLACE INTO prayer_times VALUES (?,?,?,?,?,?,?)', 
+              (date, *times.values()))
+    conn.commit()
+    conn.close()
+    
+    # توليد HTML ديناميكي
+    rows = "".join(f"<tr><td>{name}</td><td>{time}</td></tr>" 
+                  for name, time in times.items())
+    return HTML_TEMPLATE.format(date=date, rows=rows)
 
-    if (_errorMessage.isNotEmpty) {
-      return Center(child: Text(_errorMessage, style: const TextStyle(color: Colors.red)));
-    }
+@app.route('/api/times')
+def api_times():
+    lat = request.args.get('lat', default=24.7136, type=float)
+    lng = request.args.get('lng', default=46.6753, type=float)
+    return jsonify(PrayerCalculator(lat, lng).calculate_times())
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          _LocationInfo(position: _currentPosition!),
-          const SizedBox(height: 20),
-          PrayerTimesTable(prayerTimes: _prayerTimes!, prayerNames: _prayerNames),
-          const SizedBox(height: 20),
-          QiblaCompass(direction: _qiblahDirection),
-        ],
-      ),
-    );
-  }
-}
+# ─── نظام الإشعارات التلقائي ───────────────────────────────────────
+def check_prayer_times():
+    while True:
+        times = PrayerCalculator().calculate_times()
+        current_time = datetime.datetime.now().strftime('%H:%M')
+        for prayer, time in times.items():
+            if time == current_time:
+                threading.Thread(target=send_notification, args=(prayer, time)).start()
+        threading.Event().wait(60)
 
-class _LocationInfo extends StatelessWidget {
-  final Position position;
-
-  const _LocationInfo({required this.position});
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        leading: const Icon(Icons.location_on),
-        title: const Text('الموقع الحالي'),
-        subtitle: Text(
-          'خط العرض: ${position.latitude.toStringAsFixed(4)}\n'
-          'خط الطول: ${position.longitude.toStringAsFixed(4)}',
-        ),
-      ),
-    );
-  }
-}
-
-class PrayerTimesTable extends StatelessWidget {
-  final Map<String, String> prayerTimes;
-  final List<String> prayerNames;
-
-  const PrayerTimesTable({
-    super.key,
-    required this.prayerTimes,
-    required this.prayerNames,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            const Text(
-              'أوقات الصلاة',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            ...List.generate(prayerNames.length, (index) => _PrayerRow(
-              prayerNames[index],
-              prayerTimes.values.elementAt(index),
-            )),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PrayerRow extends StatelessWidget {
-  final String name;
-  final String time;
-
-  const _PrayerRow(this.name, this.time);
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(name, style: const TextStyle(fontSize: 16)),
-          Text(time, style: const TextStyle(fontWeight: FontWeight.bold)),
-        ],
-      ),
-    );
-  }
-}
-
-class QiblaCompass extends StatelessWidget {
-  final double direction;
-
-  const QiblaCompass({super.key, required this.direction});
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            const Text(
-              'اتجاه القبلة',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: 200,
-              height: 200,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  Image.asset('assets/compass.png'),
-                  Transform.rotate(
-                    angle: direction * (pi / 180),
-                    child: Image.asset('assets/needle.png', width: 100),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text('الزاوية: ${direction.toStringAsFixed(1)}°'),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class SettingsScreen extends StatelessWidget {
-  final bool isDarkMode;
-  final ValueChanged<bool> onDarkModeChanged;
-
-  const SettingsScreen({
-    super.key,
-    required this.isDarkMode,
-    required this.onDarkModeChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('الإعدادات')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          SwitchListTile(
-            title: const Text('الوضع الليلي'),
-            value: isDarkMode,
-            onChanged: onDarkModeChanged,
-          ),
-          ListTile(
-            title: const Text('طريقة الحساب'),
-            subtitle: const Text('رابطة العالم الإسلامي'),
-            trailing: const Icon(Icons.arrow_forward_ios),
-            onTap: () {},
-          ),
-        ],
-      ),
-    );
-  }
-}
+# ─── التشغيل الرئيسي ───────────────────────────────────────────────
+if __name__ == '__main__':
+    threading.Thread(target=check_prayer_times, daemon=True).start()
+    app.run(host='0.0.0.0', port=5000)
